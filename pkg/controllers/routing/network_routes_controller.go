@@ -341,6 +341,21 @@ func (nrc *NetworkRoutingController) watchBgpUpdates() {
 	}
 }
 
+func pathAttributeNextHop(value string) *bgp.PathAttributeNextHop {
+	if net.ParseIP(value).To4() != nil {
+		return bgp.NewPathAttributeNextHop(value)
+	} else {
+		return &bgp.PathAttributeNextHop{
+			PathAttribute: bgp.PathAttribute{
+				Flags:  bgp.PathAttrFlags[bgp.BGP_ATTR_TYPE_NEXT_HOP],
+				Type:   bgp.BGP_ATTR_TYPE_NEXT_HOP,
+				Length: 16,
+			},
+			Value: net.ParseIP(value).To16(),
+		}
+	}
+}
+
 func (nrc *NetworkRoutingController) advertisePodRoute() error {
 	cidr, err := utils.GetPodCidrFromNodeSpec(nrc.clientset, nrc.hostnameOverride)
 	if err != nil {
@@ -352,14 +367,21 @@ func (nrc *NetworkRoutingController) advertisePodRoute() error {
 	cidrLen, _ := strconv.Atoi(cidrStr[1])
 	attrs := []bgp.PathAttributeInterface{
 		bgp.NewPathAttributeOrigin(0),
-		bgp.NewPathAttributeNextHop(nrc.nodeIP.String()),
+		pathAttributeNextHop(nrc.nodeIP.String()),
 	}
 
 	glog.V(2).Infof("Advertising route: '%s/%s via %s' to peers", subnet, strconv.Itoa(cidrLen), nrc.nodeIP.String())
 
-	if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPAddrPrefix(uint8(cidrLen),
-		subnet), false, attrs, time.Now(), false)}); err != nil {
-		return fmt.Errorf(err.Error())
+	if net.ParseIP(subnet).To4() != nil {
+		if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPAddrPrefix(uint8(cidrLen),
+			subnet), false, attrs, time.Now(), false)}); err != nil {
+			return fmt.Errorf(err.Error())
+		}
+	} else {
+		if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPv6AddrPrefix(uint8(cidrLen),
+			subnet), false, attrs, time.Now(), false)}); err != nil {
+			return fmt.Errorf(err.Error())
+		}
 	}
 
 	return nil
