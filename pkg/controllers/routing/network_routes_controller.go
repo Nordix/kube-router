@@ -365,25 +365,50 @@ func (nrc *NetworkRoutingController) advertisePodRoute() error {
 	cidrStr := strings.Split(cidr, "/")
 	subnet := cidrStr[0]
 	cidrLen, _ := strconv.Atoi(cidrStr[1])
-	attrs := []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(0),
-		pathAttributeNextHop(nrc.nodeIP.String()),
-	}
-
-	glog.V(2).Infof("Advertising route: '%s/%s via %s' to peers", subnet, strconv.Itoa(cidrLen), nrc.nodeIP.String())
-
-	if net.ParseIP(subnet).To4() != nil {
-		if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPAddrPrefix(uint8(cidrLen),
-			subnet), false, attrs, time.Now(), false)}); err != nil {
-			return fmt.Errorf(err.Error())
+	if nrc.isIpv6 {
+		prefixes := []bgp.AddrPrefixInterface{bgp.NewIPv6AddrPrefix(uint8(cidrLen), subnet)}
+		attrs := []bgp.PathAttributeInterface{
+			bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+			// arvinder: This requires some research.
+			// For ipv6 what should be next-hop value? According to	 this https://www.noction.com/blog/bgp-next-hop
+			// using the link-local	 address may be more appropriate.
+			bgp.NewPathAttributeMpReachNLRI(nrc.nodeIP.String(), prefixes),
+			&bgp.PathAttributeNextHop{
+				PathAttribute: bgp.PathAttribute{
+					Flags:  bgp.PathAttrFlags[bgp.BGP_ATTR_TYPE_NEXT_HOP],
+					Type:   bgp.BGP_ATTR_TYPE_NEXT_HOP,
+					Length: 16,
+				},
+				Value: nrc.nodeIP,
+			},
 		}
-	} else {
+
+		glog.V(2).Infof("Advertising route: '%s/%s via %s' to peers using attribute: %+q", subnet, strconv.Itoa(cidrLen), nrc.nodeIP.String(), attrs)
+
 		if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPv6AddrPrefix(uint8(cidrLen),
 			subnet), false, attrs, time.Now(), false)}); err != nil {
 			return fmt.Errorf(err.Error())
 		}
-	}
+	} else {
+		attrs := []bgp.PathAttributeInterface{
+			bgp.NewPathAttributeOrigin(0),
+			pathAttributeNextHop(nrc.nodeIP.String()),
+		}
 
+		glog.V(2).Infof("Advertising route: '%s/%s via %s' to peers", subnet, strconv.Itoa(cidrLen), nrc.nodeIP.String())
+
+		if net.ParseIP(subnet).To4() != nil {
+			if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPAddrPrefix(uint8(cidrLen),
+				subnet), false, attrs, time.Now(), false)}); err != nil {
+				return fmt.Errorf(err.Error())
+			}
+		} else {
+			if _, err := nrc.bgpServer.AddPath("", []*table.Path{table.NewPath(nil, bgp.NewIPv6AddrPrefix(uint8(cidrLen),
+				subnet), false, attrs, time.Now(), false)}); err != nil {
+				return fmt.Errorf(err.Error())
+			}
+		}
+	}
 	return nil
 }
 
